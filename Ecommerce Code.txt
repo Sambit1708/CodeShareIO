@@ -1,0 +1,56 @@
+public void generateMonthlyCutOfDateEmail(SvcFlowRequestWrapper svcFlowRequestWrapper) {
+        String fileName = "Fund_Dividend_Notification";
+        String emailType = "Fund_Monthly_Notification";
+
+        EmailNotificationResponse notificationResponse = new EmailNotificationResponse;
+        List<String> messages = new ArrayList<>();
+        List<FundDividenedAmount> currentRecords = fundDividendAmountRepository.findByLatestMonthYear();
+        
+        for(FundDividenedAmount fundament : currentRecords) {
+            Object fourBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate(fundament.getProjectedRecordDate(), "-4");
+            Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate(fundament.getProjectedRecordDate(), "-1");
+        
+            LocalDate fourBusinessDay = LocalDate.parse(fourBusinessDayObj.toString());
+            DateTimeFormatter oneBusinessDayFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+            if(LocalDate.now().isEqual(fourBusinessDay)) {
+                List<FundDividendList> list = fundDividendListRepository.findAll();
+                EmailNotificationData emailNotificationFromDB = emailNotificationDataRepo.getEmailData(fileName, emailType);
+                for(FundDividendList fundList : list) {
+        
+                    String message = emailNotificationFromDB.getEmailContent();
+                    message = message.replace("<<Fund Name>>", fundList.getFundName());
+                    message = message.replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", LocalDateTime.parse(str, formatter));
+
+                    emailNotificationFromDB.setEmailContent(message);
+                    sendEmailNotification(svcFlowRequestWrapper, emailNotificationFromDB);
+                }
+            }
+        }
+    }
+
+    public void sendEmailNotification(SvcFlowRequestWrapper svcFlowRequestWrapper, EmailNotificationData emailNotificationData, String emailContent) {
+        HttpHeaders headers = requestWrapper.getHeaders();
+        String xid = headers.getFirst(RAConstants.X_CORREALITION_ID);
+        String xic = headers.getFirst(RAConstants.X_TRACEABLITY_ID);
+
+        AccessTokenDto token  commonApiHandler.getOktaToken(xid, businessDateScope, endpoint, ClientID, clientSecret, proxy, port);
+        
+        String subject = emailNotificationData.getEmailSubject();
+        String emailBody = emailNotificationData.getEmailContent();
+        Map<String, String> emailMap = new HashMap<>();
+        emailMap.put("emailSubject", subject);
+        emailMap.put("emailContent", emailBody);
+
+        String emailRecepient = emailNotificationData.getEmailReceipient();
+
+        for(String email : emailRecepient.split(",")) {
+            emailMap.put("emailRecipient", email);
+            ResponseData response = commonApiHandler.sendEmailNotification(token, emailMap, xic, xid, proxy, port);
+            if(response != null) {
+                log.info("Email sent successfully to: " + email);
+            } else {
+                log.error("Failed to send email to: " + email);
+            }
+        }
+    }
