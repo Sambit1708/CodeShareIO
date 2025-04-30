@@ -1,57 +1,7 @@
-public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper requestWrapper) {
-        HashMap<String, String> queryParams = requestWrapper.getQueryParams();
-        String emailType = queryParams.get(EMAILNOTIFYTYPE_HEADER_NAME);
-        String cutoffDateStr = queryParams.get(REPORTDATE_HEADER_NAME);
-
-        if(emailType != null && emailType.equalsIgnoreCase("Fund_Monthly_Notification")) {
-            generateMonthlyCutOfDateEmail(requestWrapper, cutoffDateStr);
-        } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Reminder_Notification")) {
-            generateReminderCutOfDateEmail(requestWrapper, cutoffDateStr);
-        }
-
-        EmailNotificationResponse notificationResponse = new EmailNotificationResponse();
-        notificationResponse.setApiCode (200);
-        notificationResponse.setData("Email generated successfully");
-
-        return notificationResponse;
-
-    }
-
-
-    public void generateReminderCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
-        LocalDate cutoffDate = LocalDate.parse(cutOffDateStr);
-
-        LocalDate today = LocalDate.now();
-        int month = today.getMonthValue();
-        int year = today.getYear();
-
-        if(fundDividendAmountRepository.existByMonthAndYear(month, year)) {
-            log.info("Fund Dividend Amount already exists for the month: " + month + " and year: " + year);
-            return;
-        }
-
-        int noOfDays = 3;
-        Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate (cutoffDate, "-1", requestWrapper);
-        LocalDateTime oneBusinessDayTime = LocalDate.parse(oneBusinessDayObj.toString()).atTime(12, 0, 0, 0);
-
-        while (noOfDays > 0) {
-            String numOfDy = "-"+noOfDays;
-            Object numOfDayObj fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, numOfDy, requestWrapper);
-            
-            LocalDate parsedDate = LocalDate.parse(numOfDayObj.toString());
-            if(LocalDate.now().isEqual(parsedDate)) {
-                List<FundDividendList> list = fundDividendListRepository.findAll();
-                EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(fileName, emailType);
-
-                for (FundDividendList fundList: list) {
-                    String message emailNotificationFromDB.getEmailContent();
-                    message = message.replace(target: "<<Fund Name>>", fundList.getFundName());
-                    message message.replace(target: "<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
-                    emailNotificationFromDB.setEmailContent(message);
-                    sendEmailNotify (requestWrapper, emailNotificationFromDB);
-                }
-            }
-
-            noOfDays--;
-        }
-    }
+SELECT EXISTS (
+    SELECT 1 
+    FROM ra_dividend_am
+    WHERE DATE_PART('month',record_date) = 10
+    AND DATE_PART('year', record_date) = 2023
+    LIMIT 1
+);
