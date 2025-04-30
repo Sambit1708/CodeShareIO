@@ -1,7 +1,14 @@
-SELECT EXISTS (
-    SELECT 1 
-    FROM ra_dividend_am
-    WHERE DATE_PART('month',record_date) = 10
-    AND DATE_PART('year', record_date) = 2023
-    LIMIT 1
-);
+public boolean existsRecordForSameMonthAndYear(LocalDate inputDate) {
+        List<FundDividendAmount> fundDividendAmountList = fundDividendAmountRepository.findAll();
+        
+        int inputMonth = inputDate.getMonthValue();
+        int inputYear = inputDate.getYear();
+        
+        return fundDividendAmountList.stream()
+            .anyMatch(record -> {
+                LocalDate recordDate = record.getProjectedRecordDate();
+                return recordDate != null && 
+                       recordDate.getMonthValue() == inputMonth && 
+                       recordDate.getYear() == inputYear;
+            });
+    }
