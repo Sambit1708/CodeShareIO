@@ -1,14 +1,51 @@
-public boolean existsRecordForSameMonthAndYear(LocalDate inputDate) {
-        List<FundDividendAmount> fundDividendAmountList = fundDividendAmountRepository.findAll();
+public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper requestWrapper) {
+        HashMap<String, String> queryParams = requestWrapper.getQueryParams();
+        String emailType = queryParams.get(EMAILNOTIFYTYPE_HEADER_NAME);
+        String cutoffDateStr = queryParams.get(REPORTDATE_HEADER_NAME);
+        EmailNotificationResponse notificationResponse = new EmailNotificationResponse();
         
-        int inputMonth = inputDate.getMonthValue();
-        int inputYear = inputDate.getYear();
+        if(emailType != null && emailType.equalsIgnoreCase("Fund_Monthly_Notification")) {
+            generateMonthlyCutOfDateEmail(requestWrapper, cutoffDateStr);
+        } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Reminder_Notification")) {
+            generateReminderCutOfDateEmail(requestWrapper, cutoffDateStr);
+        } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Exception_Notification")) {
+            generateExceptionCutOfDateEmail(requestWrapper, cutoffDateStr);
+        } else {
+            log.error("Invalid email type: " + emailType);
+            notificationResponse.setApiCode (400);
+            notificationResponse.setData("Invalid email type: " + emailType);
+
+        return notificationResponse;
+        }
+
         
-        return fundDividendAmountList.stream()
-            .anyMatch(record -> {
-                LocalDate recordDate = record.getProjectedRecordDate();
-                return recordDate != null && 
-                       recordDate.getMonthValue() == inputMonth && 
-                       recordDate.getYear() == inputYear;
-            });
+        notificationResponse.setApiCode (200);
+        notificationResponse.setData("Email generated successfully");
+
+        return notificationResponse;
+
+    }
+
+    public void generateExceptionCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+        LocalDate cutoffDate = LocalDate.parse(cutOffDateStr);
+        
+        Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate (cutoffDate, "-1", requestWrapper);
+        LocalDateTime oneBusinessDayTime = LocalDate.parse(oneBusinessDayObj.toString()).atTime(12, 0, 0, 0);
+
+        int month = cutoffDate.getMonthValue();
+        int year = cutoffDate.getYear();
+
+        if(fundDividendAmountRepository.existByMonthAndYear(month, year)) {
+            log.info("Fund Dividend Amount already exists for the month: {} and year: {}",month, year);
+            return;
+        }
+
+        if(LocalDate.now().isEqual(parsedDate)) {
+            EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(fileName, "Fund_Exception_Notification");
+
+            String message = emailNotificationFromDB.getEmailContent();
+            message = message.replace("<<Projected Record Date>>", oneBusinessDayTime.toString());
+            emailNotificationFromDB.setEmailContent(message);
+            sendEmailNotify (requestWrapper, emailNotificationFromDB);
+        }
     }
