@@ -9,24 +9,21 @@ public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper re
         } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Reminder_Notification")) {
             generateReminderCutOfDateEmail(requestWrapper, cutoffDateStr);
         } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Exception_Notification")) {
-            generateExceptionCutOfDateEmail(requestWrapper, cutoffDateStr);
+            return generateExceptionCutOfDateEmail(requestWrapper, cutoffDateStr);
         } else {
             log.error("Invalid email type: " + emailType);
             notificationResponse.setApiCode (400);
             notificationResponse.setData("Invalid email type: " + emailType);
 
-        return notificationResponse;
+            return notificationResponse;
         }
+            notificationResponse.setApiCode (200);
+            notificationResponse.setData("Email generated successfully");
 
-        
-        notificationResponse.setApiCode (200);
-        notificationResponse.setData("Email generated successfully");
-
-        return notificationResponse;
-
+            return notificationResponse;
     }
 
-    public void generateExceptionCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+    public EmailNotificationResponse generateExceptionCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
         LocalDate cutoffDate = LocalDate.parse(cutOffDateStr);
         
         Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate (cutoffDate, "-1", requestWrapper);
@@ -37,7 +34,11 @@ public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper re
 
         if(fundDividendAmountRepository.existByMonthAndYear(month, year)) {
             log.info("Fund Dividend Amount already exists for the month: {} and year: {}",month, year);
-            return;
+        
+            notificationResponse.setApiCode (200);
+            notificationResponse.setData("Fund Dividend Amount already exists.");
+
+            return notificationResponse;
         }
 
         if(LocalDate.now().isEqual(parsedDate)) {
@@ -47,5 +48,15 @@ public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper re
             message = message.replace("<<Projected Record Date>>", oneBusinessDayTime.toString());
             emailNotificationFromDB.setEmailContent(message);
             sendEmailNotify (requestWrapper, emailNotificationFromDB);
+        
+            notificationResponse.setApiCode (200);
+            notificationResponse.setData("Email generated successfully");
+
+            return notificationResponse;
         }
+        
+        notificationResponse.setApiCode (400);
+        notificationResponse.setData("Failed to send email.");
+
+        return notificationResponse;
     }
