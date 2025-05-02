@@ -1,62 +1,224 @@
-public EmailNotificationResponse sendEmailNotification (SvcFlowRequestWrapper requestWrapper) {
-        HashMap<String, String> queryParams = requestWrapper.getQueryParams();
-        String emailType = queryParams.get(EMAILNOTIFYTYPE_HEADER_NAME);
-        String cutoffDateStr = queryParams.get(REPORTDATE_HEADER_NAME);
-        EmailNotificationResponse notificationResponse = new EmailNotificationResponse();
-        
-        if(emailType != null && emailType.equalsIgnoreCase("Fund_Monthly_Notification")) {
-            generateMonthlyCutOfDateEmail(requestWrapper, cutoffDateStr);
-        } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Reminder_Notification")) {
-            generateReminderCutOfDateEmail(requestWrapper, cutoffDateStr);
-        } else if(emailType != null && emailType.equalsIgnoreCase("Fund_Exception_Notification")) {
-            return generateExceptionCutOfDateEmail(requestWrapper, cutoffDateStr);
-        } else {
-            log.error("Invalid email type: " + emailType);
-            notificationResponse.setApiCode (400);
-            notificationResponse.setData("Invalid email type: " + emailType);
+private static final String FILE_NAME = "Fund_Dividend_Notification";
+    private static final String FUND_MONTHLY_NOTIFICATION = "Fund_Monthly_Notification";
+    private static final String FUND_REMINDER_NOTIFICATION = "Fund_Reminder_Notification";
+    private static final String FUND_EXCEPTION_NOTIFICATION = "Fund_Exception_Notification";
+    
 
-            return notificationResponse;
+    public EmailNotificationResponse sendEmailNotification(SvcFlowRequestWrapper requestWrapper) {
+        Map<String, Object> queryParams = requestWrapper.getQueryParams();
+
+        String emailType = Objects.toString(queryParams.get(EMAILNOTIFYTYPE_HEADER_NAME), null);
+        String cutoffDateStr = Objects.toString(queryParams.get(REPORTDATE_HEADER_NAME), null);
+
+        if (emailType == null || cutoffDateStr == null) {
+            log.error("Please provide the mandatory detail of EmailType and ReportDate.");
+            return generateErrorResponse("Please provide the mandatory detail of EmailType and ReportDate.");
         }
-            notificationResponse.setApiCode (200);
-            notificationResponse.setData("Email generated successfully");
 
-            return notificationResponse;
+        switch (emailType.toUpperCase()) {
+            case FUND_MONTHLY_NOTIFICATION:
+                return generateMonthlyCutOfDateEmail(requestWrapper, cutoffDateStr);
+            case FUND_REMINDER_NOTIFICATION:
+                return generateReminderCutOfDateEmail(requestWrapper, cutoffDateStr);
+            case FUND_EXCEPTION_NOTIFICATION:
+                return generateExceptionCutOfDateEmail(requestWrapper, cutoffDateStr);
+            default:
+                log.error("Invalid email type: {}", emailType);
+                return generateErrorResponse("Invalid email type: " + emailType);
+        }
     }
 
+    public EmailNotificationResponse generateMonthlyCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+        LocalDate cutoffDate = LocalDate.parse(cutoffDateStr);
+        LocalDate today = LocalDate.now();
+
+        LocalDate fourBusinessDay = LocalDate.parse(
+            fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, "-4", requestWrapper).toString()
+        );
+        LocalDateTime oneBusinessDayTime = LocalDate.parse(
+            fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, "-1", requestWrapper).toString()
+        ).atTime(12, 0);
+
+        List<FundDividendList> list = fundDividendListRepository.findAll();
+        EmailNotify emailTemplate = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_MONTHLY_NOTIFICATION);
+
+        if (emailTemplate == null) {
+            log.warn("Email template not found for {} on cutoff date {}", FUND_MONTHLY_NOTIFICATION, cutoffDateStr);
+            return generateErrorResponse("Email template not found for " + FUND_MONTHLY_NOTIFICATION);
+        }
+
+        try {
+            if(today.isEqual(fourBusinessDay)) {
+                for (FundDividendList fundList : list) {
+                    EmailNotify emailToSend = new EmailNotify(emailTemplate); // assuming copy constructor or clone
+                    String message = emailTemplate.getEmailContent()
+                            .replace("<<Fund Name>>", fundList.getFundName())
+                            .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
+
+                    emailToSend.setEmailContent(message);
+                    sendEmailNotify(requestWrapper, emailToSend);
+                }
+                return generateSuccessResponse("Email generated successfully");
+            }
+        } catch (Exception e) {
+            log.error("Error generating email: {}", e.getMessage(), e);
+            return generateErrorResponse("Error generating email: " + e.getMessage());
+        }
+        return generateSuccessResponse("Today is not the business day before cutoff. No email sent.");
+    }
+
+    public EmailNotificationResponse generateReminderCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+        // Parse the cutoff date from the string
+        LocalDate cutoffDate = LocalDate.parse(cutoffDateStr);
+        LocalDate today = LocalDate.now();
+        int month = cutoffDate.getMonthValue();
+        int year = cutoffDate.getYear();
+
+        // Check if the fund dividend amount already exists for the given month and year
+        if (fundDividendAmountRepository.existByMonthAndYear(month, year)) {
+            log.info("Fund Dividend Amount already exists for the month: {} and year: {}", month, year);
+            return generateSuccessResponse(String.format("Record already exists - no reminder e-notification will be generated to user for month: %d and year: %d", month, year));
+        }
+
+        // Calculate the one business day before the cutoff date
+        Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, "-1", requestWrapper);
+        LocalDateTime oneBusinessDayTime = LocalDate.parse(oneBusinessDayObj.toString()).atTime(12, 0);
+
+        LocalDate parsedDate = LocalDate.now();
+        while (int i = 1; i < 4; i++) {
+            String offset = "-" + i;
+            Object dateObj = fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, offset, requestWrapper);
+            LocalDate reminderDay = LocalDate.parse(dateObj.toString());
+
+            if (today.isEqual(reminderDay)) {
+                // Fetch the email template from the database
+                List<FundDividendList> list = fundDividendListRepository.findAll();
+                EmailNotify emailNotificationFromDB = emailNotificationRepository
+                    .findByFileNameAndEmailType(FILE_NAME, FUND_REMINDER_NOTIFICATION);
+
+                if (emailNotificationFromDB == null) {
+                    log.warn("Email template not found for {} on cutoff date {}", FUND_REMINDER_NOTIFICATION, cutoffDateStr);
+                    return generateErrorResponse("Email template not found for " + FUND_REMINDER_NOTIFICATION);
+                }
+                try {
+                    for (FundDividendList fundList : list) {
+                        EmailNotify emailToSend = new EmailNotify(emailTemplate); // assuming copy constructor or clone
+                        String message = emailTemplate.getEmailContent()
+                                .replace("<<Fund Name>>", fundList.getFundName())
+                                .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
+
+                        emailToSend.setEmailContent(message);
+                        sendEmailNotify(requestWrapper, emailToSend);
+                    }
+                    return generateSuccessResponse("Email generated successfully");
+                } catch (Exception e) {
+                    log.error("Error generating email: {}", e.getMessage(), e);
+                    return generateErrorResponse("Error generating email: " + e.getMessage());
+                }
+            }
+        }
+        return generateSuccessResponse("Today is not a reminder-triggering business day before the cutoff.");
+    }
+    
     public EmailNotificationResponse generateExceptionCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
-        LocalDate cutoffDate = LocalDate.parse(cutOffDateStr);
-        
-        Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate (cutoffDate, "-1", requestWrapper);
-        LocalDateTime oneBusinessDayTime = LocalDate.parse(oneBusinessDayObj.toString()).atTime(12, 0, 0, 0);
+        // Parse the cutoff date from the string
+        LocalDate cutoffDate = LocalDate.parse(cutoffDateStr);
+        LocalDate today = LocalDate.now();
+
+        // Calculate the one business day before the cutoff date
+        Object oneBusinessDayObj = fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffDate, "-1", requestWrapper);
+        LocalDate oneBusinessDay = LocalDate.parse(oneBusinessDayObj.toString());
+        LocalDateTime oneBusinessDayTime = oneBusinessDay.atTime(12, 0);
 
         int month = cutoffDate.getMonthValue();
         int year = cutoffDate.getYear();
 
-        if(fundDividendAmountRepository.existByMonthAndYear(month, year)) {
-            log.info("Fund Dividend Amount already exists for the month: {} and year: {}",month, year);
-        
-            notificationResponse.setApiCode (200);
-            notificationResponse.setData("Fund Dividend Amount already exists.");
-
-            return notificationResponse;
+        // Check if the fund dividend amount already exists for the given month and year
+        if (fundDividendAmountRepository.existByMonthAndYear(month, year)) {
+            log.info("Fund Dividend Amount already exists for the month: {} and year: {}", month, year);
+            return generateSuccessResponse(String.format(
+                "Record already exists - no exception e-notification will be generated to user for month: %d and year: %d",
+                month, year));
         }
 
-        if(LocalDate.now().isEqual(parsedDate)) {
-            EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(fileName, "Fund_Exception_Notification");
+        if (today.isEqual(oneBusinessDay)) {
+            // Fetch the email template from the database
+            EmailNotify emailNotificationFromDB = emailNotificationRepository
+                    .findByFileNameAndEmailType(FILE_NAME, FUND_EXCEPTION_NOTIFICATION);
 
-            String message = emailNotificationFromDB.getEmailContent();
-            message = message.replace("<<Projected Record Date>>", oneBusinessDayTime.toString());
-            emailNotificationFromDB.setEmailContent(message);
-            sendEmailNotify (requestWrapper, emailNotificationFromDB);
-        
-            notificationResponse.setApiCode (200);
-            notificationResponse.setData("Email generated successfully");
 
-            return notificationResponse;
+            if (emailNotificationFromDB == null) {
+                log.warn("Email template not found for {} on cutoff date {}", FUND_EXCEPTION_NOTIFICATION, cutoffDateStr);
+                return generateErrorResponse("Email template not found for " + FUND_EXCEPTION_NOTIFICATION);
+            }
+            try {
+                String message = emailTemplate.getEmailContent()
+                    .replace("<<Projected Record Date>>", oneBusinessDayTime.toString());
+
+                emailTemplate.setEmailContent(message);
+                sendEmailNotify(requestWrapper, emailTemplate);
+
+                return generateSuccessResponse("Email generated successfully");
+            } catch (Exception e) {
+                log.error("Error generating exception email: {}", e.getMessage(), e);
+                return generateErrorResponse("Error sending exception email: " + e.getMessage());
+            }
         }
-        
-        notificationResponse.setApiCode (400);
-        notificationResponse.setData("Failed to send email.");
 
-        return notificationResponse;
+        return generateSuccessResponse("Today is not the business day before cutoff. No email sent.");
+    }
+
+    public void sendEmailNotify(SvcFlowRequestWrapper svcFlowRequestWrapper, EmailNotify emailNotificationData) {
+        // Extract headers for API communication
+        HttpHeaders headers = svcFlowRequestWrapper.getHeaders();
+        String xid = headers.getFirst("x-correlation-id");
+        String xic = headers.getFirst("x-traceability-id");
+
+        // Generate an access token for the API
+        AccessTokenDto token = commonApiHandler.getOktaToken(
+            xid,
+            commonApiEmailScope,
+            endpoint,
+            clientid,
+            clientSecret,
+            proxy,
+            port
+        );
+
+        // Prepare email details
+        String subject = emailNotificationData.getEmailSubject();
+        String emailBody = emailNotificationData.getEmailContent();
+
+        Map<String, String> emailMap = new HashMap<>();
+        emailMap.put("emailSubject", subject);
+        emailMap.put("emailContent", emailBody);
+
+        // Send email to each recipient
+        String emailRecipient = emailNotificationData.getEmailReceipient();
+
+        for (String email : emailRecipient.split(",")) {
+            emailMap.put("emailRecipient", email.trim());
+
+            ResponseData response = commonApiHandler.sendEmail(emailMap, xid, xic, token);
+
+            if (response != null) {
+                log.info("Email sent successfully to: {}", email);
+            } else {
+                log.error("Failed to send email to: {}", email);
+            }
+        }
+    }
+
+    private EmailNotificationResponse generateSuccessResponse(String message) {
+        EmailNotificationResponse response = new EmailNotificationResponse();
+        response.setApiCode(200);
+        response.setData(message);
+        return response;
+    }
+
+    private EmailNotificationResponse generateErrorResponse(String message) {
+        EmailNotificationResponse response = new EmailNotificationResponse();
+        response.setApiCode(400);
+        response.setData(message);
+        return response;
     }
