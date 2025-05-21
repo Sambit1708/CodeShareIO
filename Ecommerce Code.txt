@@ -1,45 +1,54 @@
-public EmailNotificationResponse generateMonthlyCutoffDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
-    LocalDate reportDate = LocalDate.parse(cutoffDateStr);
+public EmailNotificationResponse generateReminderCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+    LocalDate recordDate = LocalDate.parse(cutoffDateStr);
     LocalDate cutoffLocalDate = calculateCutoffLocalDate(requestWrapper);
-    LocalDate cuttOfLocalDatePlusOne = ocalDate.parse(
-        fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffLocalDate, "+1", requestWrapper).toString()
+    LocalDate cuttOfLocalDatePlusOne = LocalDate.parse(
+        fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffLocalDate, "1", requestWrapper).toString()
     );
 
-    LocalDate fourBusinessDay = LocalDate.parse(
-        fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, "-4", requestWrapper).toString()
-    );
+    int month = recordDate.getMonthValue();
+    int year = recordDate.getYear();
 
-    LocalDateTime oneBusinessDayTime = LocalDate.parse(
-        fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, "-1", requestWrapper).toString()
-    ).atTime(12, 0);
-
-    EmailNotify emailTemplate = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_MONTHLY_NOTIFICATION);
-
-    try {
-        if (fourBusinessDay.isEqual(reportDate)) {
-            // Fetch distinct fund names
-            List<String> fundNames = fundDividendListRepository.findDistinctFundNames();
-
-            if (fundNames.isEmpty()) {
-                log.error(RAConstants.NO_FUND_NAMES_ERROR);
-                return generateErrorResponse(RAConstants.NO_FUND_NAMES_ERROR);
-            }
-
-            for (String fundName : fundNames) {
-                String message = emailTemplate.getEmailContent()
-                    .replace("<<Fund Name>>", fundName)
-                    .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
-
-                emailTemplate.setEmailContent(message);
-                sendEmailNotify(requestWrapper, emailTemplate);
-            }
-
-            return generateSuccessResponse("Emails generated successfully for all distinct funds.");
-        }
-    } catch (Exception e) {
-        log.error("Error generating email: {}", e.getMessage(), e);
-        return generateErrorResponse("Error generating email: " + e.getMessage());
+    if (fundDividendAmountRepository.existByMonthAndYear(month, year)) {
+        log.info("Fund Dividend Amount already exists for the month: {} and year: {}", month, year);
+        return generateSuccessResponse(
+            String.format("Record already exists; no reminder e-notification will be generated to user for month: %d and year: %d", month, year)
+        );
     }
 
-    return generateSuccessResponse("Today is not a reminder-triggering business day before the cutoff.");
+    LocalDateTime oneBusinessDayTime = cutoffLocalDate.atTime(12, 0);
+
+    for (int i = 1; i < 4; i++) {
+        String offset = "-" + i;
+        Object dateObj = fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, offset, requestWrapper);
+        LocalDate reminderDay = LocalDate.parse(dateObj.toString());
+
+        if (recordDate.isEqual(reminderDay)) {
+            EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_REMINDER_NOTIFICATION);
+
+            try {
+                List<String> fundNames = fundDividendListRepository.findDistinctFundNames();
+
+                if (fundNames.isEmpty()) {
+                    log.error(RAConstants.NO_FUND_NAMES_ERROR);
+                    return generateErrorResponse(RAConstants.NO_FUND_NAMES_ERROR);
+                }
+
+                for (String fundName : fundNames) {
+                    String message = emailNotificationFromDB.getEmailContent()
+                        .replace("<<Fund Name>>", fundName)
+                        .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
+
+                    emailNotificationFromDB.setEmailContent(message);
+                    sendEmailNotify(requestWrapper, emailNotificationFromDB);
+                }
+
+                return generateSuccessResponse("Reminder emails generated successfully for all distinct funds.");
+            } catch (Exception e) {
+                log.error("Error generating reminder email: {}", e.getMessage(), e);
+                return generateErrorResponse("Error generating reminder email: " + e.getMessage());
+            }
+        }
+    }
+
+    return generateSuccessResponse("Today is not a reminder-triggering business day before the cutoff.");
 }
