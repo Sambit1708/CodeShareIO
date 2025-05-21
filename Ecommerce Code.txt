@@ -1,4 +1,45 @@
-LocalDate reportDate = LocalDate.parse(cutoffDateStr);
-    LocalDate cutoffLocalDate = LocalDate.parse(
+public EmailNotificationResponse generateMonthlyCutoffDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
+    LocalDate reportDate = LocalDate.parse(cutoffDateStr);
+    LocalDate cutoffLocalDate = calculateCutoffLocalDate(requestWrapper);
+    LocalDate cuttOfLocalDatePlusOne = ocalDate.parse(
         fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffLocalDate, "+1", requestWrapper).toString()
     );
+
+    LocalDate fourBusinessDay = LocalDate.parse(
+        fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, "-4", requestWrapper).toString()
+    );
+
+    LocalDateTime oneBusinessDayTime = LocalDate.parse(
+        fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, "-1", requestWrapper).toString()
+    ).atTime(12, 0);
+
+    EmailNotify emailTemplate = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_MONTHLY_NOTIFICATION);
+
+    try {
+        if (fourBusinessDay.isEqual(reportDate)) {
+            // Fetch distinct fund names
+            List<String> fundNames = fundDividendListRepository.findDistinctFundNames();
+
+            if (fundNames.isEmpty()) {
+                log.error(RAConstants.NO_FUND_NAMES_ERROR);
+                return generateErrorResponse(RAConstants.NO_FUND_NAMES_ERROR);
+            }
+
+            for (String fundName : fundNames) {
+                String message = emailTemplate.getEmailContent()
+                    .replace("<<Fund Name>>", fundName)
+                    .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
+
+                emailTemplate.setEmailContent(message);
+                sendEmailNotify(requestWrapper, emailTemplate);
+            }
+
+            return generateSuccessResponse("Emails generated successfully for all distinct funds.");
+        }
+    } catch (Exception e) {
+        log.error("Error generating email: {}", e.getMessage(), e);
+        return generateErrorResponse("Error generating email: " + e.getMessage());
+    }
+
+    return generateSuccessResponse("Today is not a reminder-triggering business day before the cutoff.");
+}
