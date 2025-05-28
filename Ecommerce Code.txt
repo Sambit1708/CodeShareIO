@@ -1,99 +1,54 @@
-public EmailNotificationResponse generateExceptionCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
-    LocalDate recordDate = LocalDate.parse(cutoffDateStr);
+@Override
+public FundDividendDetails getFundDividenedDetails(SvcFlowRequestWrapper requestWrapper) {
+
+    log.info("Fetching Fund Dividend Details");
+
+    int page = (Integer) requestWrapper.getQueryParams().get(RAConstants.PAGE) - 1;
+    int size = (Integer) requestWrapper.getQueryParams().get(RAConstants.SIZE);
+    String fundCode = (String) requestWrapper.getQueryParams().get(RAConstants.FUND_CODE);
     LocalDate cutoffLocalDate = calculateCutoffLocalDate(requestWrapper);
     LocalDate cuttOfLocalDatePlusOne = LocalDate.parse(
         fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffLocalDate, "1", requestWrapper).toString()
     );
 
-    int month = recordDate.getMonthValue();
-    int year = recordDate.getYear();
-
-    if (fundDividendAmountRepository.existByMonthAndYear(month, year)) {
-        log.info("Fund Dividend Amount already exists for the month: {} and year: {}", month, year);
-        return generateSuccessResponse(
-            String.format("Record already exists; no exception e-notification will be generated to user for month: %d and year: %d", month, year)
-        );
-    }
-
-    if (recordDate.isEqual(cutoffLocalDate)) {
-        EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_EXCEPTION_NOTIFICATION);
-
-        if (emailNotificationFromDB == null) {
-            log.warn("Email template not found for {} on cutoff date {}", FUND_EXCEPTION_NOTIFICATION, cutoffDateStr);
-            return generateErrorResponse("Email template not found for " + FUND_EXCEPTION_NOTIFICATION);
-        }
-
-        try {
-            String message = emailNotificationFromDB.getEmailContent()
-                .replace("<<Projected Record Date>>", cuttOfLocalDatePlusOne.atTime(12, 0).toString());
-
-            emailNotificationFromDB.setEmailContent(message);
-            sendEmailNotify(requestWrapper, emailNotificationFromDB);
-
-            return generateSuccessResponse("Email generated successfully.");
-        } catch (Exception e) {
-            log.error("Error generating exception email: {}", e.getMessage(), e);
-            return generateErrorResponse("Error sending exception email: " + e.getMessage());
-        }
-    }
-
-    return generateSuccessResponse("Today is not the business day before cutoff. No email sent.");
-}
-
-
-
-
-public EmailNotificationResponse generateReminderCutOfDateEmail(SvcFlowRequestWrapper requestWrapper, String cutoffDateStr) {
-    LocalDate recordDate = LocalDate.parse(cutoffDateStr);
-    LocalDate cutoffLocalDate = calculateCutoffLocalDate(requestWrapper);
-    LocalDate cuttOfLocalDatePlusOne = LocalDate.parse(
-        fundCodeDividendUtils.getBusinessDateForGivenDate(cutoffLocalDate, "1", requestWrapper).toString()
+    // Fetch data using the custom query
+    Page<FundDividenedAmount> fundDividenedAmountPage = fundDividendAmountRepository.findByFundCode(
+            fundCode,
+            PageRequest.of(page, size)
     );
 
-    int month = recordDate.getMonthValue();
-    int year = recordDate.getYear();
+    // Map entities to DTOs
+    List<FundDividenedAmountDTO> dtoList = fundDividenedAmountPage.getContent()
+            .stream()
+            .map(entity -> {
+                FundDividenedAmountDTO dto = new FundDividenedAmountDTO();
+                dto.setUpdateDateTime(entity.getUpdateDateTime());
+                dto.setUpdatedBy(entity.getUpdatedBy());
+                dto.setFundCode(entity.getFundCode());
+                dto.setProjectedRecordDate(entity.getProjectedRecordDate());
+                dto.setPreviousValue(entity.getPreviousValue());
+                dto.setNewValue(entity.getNewValue());
+                dto.setRecordToEmpf(entity.getRecordToEmpf());
+                return dto;
+            })
+            .collect(Collectors.toList());
 
-    if (fundDividendAmountRepository.existByMonthAndYear(month, year)) {
-        log.info("Fund Dividend Amount already exists for the month: {} and year: {}", month, year);
-        return generateSuccessResponse(
-            String.format("Record already exists; no reminder e-notification will be generated to user for month: %d and year: %d", month, year)
-        );
-    }
+    // Find the first business day and cut off datetime for current month
+    Map<String, String> businessDayWithCutoffDateTime = fundCodeDividendUtils
+            .calculateBusinessDayWithCutOffDateTime(requestWrapper);
 
-    LocalDateTime oneBusinessDayTime = cutoffLocalDate.atTime(12, 0);
+    // Build response
+    FundDividendDetailsResponseFields responseFields = new FundDividendDetailsResponseFields();
+    responseFields.setPageNo(page + 1);
+    responseFields.setPerPageResults(size);
+    responseFields.setTotalResults((int) fundDividenedAmountPage.getTotalElements());
+    responseFields.setResults(dtoList);
+    responseFields.setProjectedRecordDate(cuttOfLocalDatePlusOne);
+    responseFields.setCutoffDividendDateTime(businessDayWithCutoffDateTime.get(RAConstants.CUTOFF_DATE_TIME));
 
-    for (int i = 1; i < 4; i++) {
-        String offset = "-" + i;
-        Object dateObj = fundCodeDividendUtils.getBusinessDateForGivenDate(cuttOfLocalDatePlusOne, offset, requestWrapper);
-        LocalDate reminderDay = LocalDate.parse(dateObj.toString());
+    FundDividendDetails fundDividendDetails = new FundDividendDetails();
+    fundDividendDetails.setData(responseFields);
+    fundDividendDetails.setApiCode(RAConstants.SUCEESS_CODE_200);
 
-        if (recordDate.isEqual(reminderDay)) {
-            EmailNotify emailNotificationFromDB = emailNotificationRepository.findByFileNameAndEmailType(FILE_NAME, FUND_REMINDER_NOTIFICATION);
-
-            try {
-                List<String> fundNames = fundDividendListRepository.findDistinctFundNames();
-
-                if (fundNames.isEmpty()) {
-                    log.error(RAConstants.NO_FUND_NAMES_ERROR);
-                    return generateErrorResponse(RAConstants.NO_FUND_NAMES_ERROR);
-                }
-
-                for (String fundName : fundNames) {
-                    String message = emailNotificationFromDB.getEmailContent()
-                        .replace("<<Fund Name>>", fundName)
-                        .replace("<<Cut-off datetime (12:00 noon of YYYY-MM-DD)>>", oneBusinessDayTime.toString());
-
-                    emailNotificationFromDB.setEmailContent(message);
-                    sendEmailNotify(requestWrapper, emailNotificationFromDB);
-                }
-
-                return generateSuccessResponse("Reminder emails generated successfully for all distinct funds.");
-            } catch (Exception e) {
-                log.error("Error generating reminder email: {}", e.getMessage(), e);
-                return generateErrorResponse("Error generating reminder email: " + e.getMessage());
-            }
-        }
-    }
-
-    return generateSuccessResponse("Today is not a reminder-triggering business day before the cutoff.");
+    return fundDividendDetails;
 }
