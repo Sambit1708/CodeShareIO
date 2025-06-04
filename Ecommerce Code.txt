@@ -1,2 +1,9 @@
-!! How To Become a good developer !!
-By practicing cogin everyday. idiot..
+private void updateStatusDetails(UpdatePaymentDataDto input,
+                                  UpdatePaymentData updatePaymentData,
+                                  LocalDateTime payStatusUpdateDate) {
+
+    if (!StringUtils.hasText(input.getStatus()) && !input.getStatus().equalsIgnoreCase(updatePaymentData.getStatus())) {
+        updatePaymentData.setPreviousStatus(updatePaymentData.getStatus());
+        updatePaymentData.setPayStatusUpdateDate(payStatusUpdateDate);
+    }
+}
