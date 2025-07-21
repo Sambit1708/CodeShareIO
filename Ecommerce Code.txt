@@ -1,9 +1,38 @@
-private void updateStatusDetails(UpdatePaymentDataDto input,
-                                  UpdatePaymentData updatePaymentData,
-                                  LocalDateTime payStatusUpdateDate) {
+private List<String> checkRowData(ExportFundMovementEntity entity, String formattedFundBidPrice) {
+    Log.info("Message: Inside checkRowData method.");
+    List<String> rows = new ArrayList<>();
+    
+    rows.add(entity.getSchemeCode() != null ? entity.getSchemeCode() : "");
+    rows.add(entity.getEmplrAcctCode() != null ? entity.getEmplrAcctCode() : "");
+    rows.add(entity.getPayrollGroupId() != null ? entity.getPayrollGroupId() : "");
+    rows.add(entity.getMbrAcctCode() != null ? entity.getMbrAcctCode() : "");
+    rows.add(entity.getHbrAcctType() != null ? entity.getMbrAcctType() : "");  // Typo in your original code
+    rows.add(entity.getSubAcctType() != null ? entity.getSubAcctType() : "");
+    rows.add(entity.getEfctvDate() != null ? strlateFormatConverter(entity.getEfctvDate()) : "");
+    rows.add(entity.getActivityTypeCode() != null ? entity.getActivityTypeCode() : "");
+    rows.add(entity.getSubActivityCode() != null ? entity.getSubActivityCode() : "");
+    rows.add(entity.getFundCode() != null ? entity.getFundCode() : "");
+    rows.add(entity.getFundClassTypeName() != null ? entity.getFundClassTypeName() : "");
+    rows.add(formattedFundBidPrice != null ? formattedFundBidPrice : "");
+    rows.add(entity.getStatus() != null ? entity.getStatus() : "");
 
-    if (!StringUtils.hasText(input.getStatus()) && !input.getStatus().equalsIgnoreCase(updatePaymentData.getStatus())) {
-        updatePaymentData.setPreviousStatus(updatePaymentData.getStatus());
-        updatePaymentData.setPayStatusUpdateDate(payStatusUpdateDate);
+    // Check if negative sign should be added
+    boolean isNegative = ACTIVITY_TYPE_CODES.contains(
+        Optional.ofNullable(entity.getActivityTypeCode()).orElse(""));
+
+    // Fund Unit
+    String fundUnit = "";
+    if (entity.getFundUnit() != null) {
+        fundUnit = isNegative ? "-" + entity.getFundUnit().toString() : entity.getFundUnit().toString();
     }
+    rows.add(fundUnit);
+
+    // Fund Amount
+    String fundAmount = "";
+    if (entity.getFundAmount() != null) {
+        fundAmount = isNegative ? "-" + entity.getFundAmount().toString() : entity.getFundAmount().toString();
+    }
+    rows.add(fundAmount);
+
+    return rows;
 }
