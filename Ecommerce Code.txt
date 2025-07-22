@@ -1,38 +1,77 @@
-private List<String> checkRowData(ExportFundMovementEntity entity, String formattedFundBidPrice) {
-    Log.info("Message: Inside checkRowData method.");
-    List<String> rows = new ArrayList<>();
-    
-    rows.add(entity.getSchemeCode() != null ? entity.getSchemeCode() : "");
-    rows.add(entity.getEmplrAcctCode() != null ? entity.getEmplrAcctCode() : "");
-    rows.add(entity.getPayrollGroupId() != null ? entity.getPayrollGroupId() : "");
-    rows.add(entity.getMbrAcctCode() != null ? entity.getMbrAcctCode() : "");
-    rows.add(entity.getHbrAcctType() != null ? entity.getMbrAcctType() : "");  // Typo in your original code
-    rows.add(entity.getSubAcctType() != null ? entity.getSubAcctType() : "");
-    rows.add(entity.getEfctvDate() != null ? strlateFormatConverter(entity.getEfctvDate()) : "");
-    rows.add(entity.getActivityTypeCode() != null ? entity.getActivityTypeCode() : "");
-    rows.add(entity.getSubActivityCode() != null ? entity.getSubActivityCode() : "");
-    rows.add(entity.getFundCode() != null ? entity.getFundCode() : "");
-    rows.add(entity.getFundClassTypeName() != null ? entity.getFundClassTypeName() : "");
-    rows.add(formattedFundBidPrice != null ? formattedFundBidPrice : "");
-    rows.add(entity.getStatus() != null ? entity.getStatus() : "");
+SELECT
+    TRANS.SCHEME_CD,
+    TRANS.EMPLR_ACCT_CD,
+    TRANS.PAYROLL_GROUP_ID,
+    TRANS.MBR_ACCT_CD,
+    MEM.MBR_ACCT_TYPE,
+    TRANSFUND.SUB_ACCT_TYPE,
+    TRANS.EFCTV_DATE,
+    TRANS.ACTIVITY_TYPE_CD,
+    TRANS.SUB_ACTIVITY_CD,
+    TRANSFUND.FUND_CD,
+    FUNDINFO.FUND_CLSS_TYP_NM,
+    FUNDPRICE.BID_PRICE_CNT,
 
-    // Check if negative sign should be added
-    boolean isNegative = ACTIVITY_TYPE_CODES.contains(
-        Optional.ofNullable(entity.getActivityTypeCode()).orElse(""));
+    -- Negate conditionally
+    CASE 
+        WHEN TRANS.ACTIVITY_TYPE_CD IN (
+            'AUTO_PRESERVE_OUT', 'FEE_CHRG', 'FORF ALLOC_OUT', 'FORFEITURE_OFFSET', 
+            'TERM', 'TRF_OUT', 'RESERVE_OUT', 'SWITCH OUT', 
+            'UNIT_CORRECTION_OUT', 'UNVEST_BAL_OUT', 'WDR', 'REFUND'
+        ) 
+        THEN -1 * COALESCE(TRANSFUND.FUND_UNIT, 0)
+        ELSE TRANSFUND.FUND_UNIT 
+    END AS FUND_UNIT,
 
-    // Fund Unit
-    String fundUnit = "";
-    if (entity.getFundUnit() != null) {
-        fundUnit = isNegative ? "-" + entity.getFundUnit().toString() : entity.getFundUnit().toString();
-    }
-    rows.add(fundUnit);
+    CASE 
+        WHEN TRANS.ACTIVITY_TYPE_CD IN (
+            'AUTO_PRESERVE_OUT', 'FEE_CHRG', 'FORF ALLOC_OUT', 'FORFEITURE_OFFSET', 
+            'TERM', 'TRF_OUT', 'RESERVE_OUT', 'SWITCH OUT', 
+            'UNIT_CORRECTION_OUT', 'UNVEST_BAL_OUT', 'WDR', 'REFUND'
+        ) 
+        THEN -1 * COALESCE(TRANSFUND.FUND_UNIT, 0) 
+        ELSE TRANSFUND.FUND_AMT 
+    END AS FUND_AMT,
 
-    // Fund Amount
-    String fundAmount = "";
-    if (entity.getFundAmount() != null) {
-        fundAmount = isNegative ? "-" + entity.getFundAmount().toString() : entity.getFundAmount().toString();
-    }
-    rows.add(fundAmount);
-
-    return rows;
-}
+    TRANS.STATUS,
+    ROW_NUMBER() OVER (
+        ORDER BY
+            TRANS.SCHEME_CD,
+            TRANS.MBR_ACCT_CD,
+            TRANS.EFCTV_DATE,
+            TRANSFUND.SUB_ACCT_TYPE,
+            TRANS.ACTIVITY_TYPE_CD,
+            TRANS.SUB_ACTIVITY_CD,
+            TRANSFUND.FUND_CD
+    ) AS ROWNO
+FROM
+    EMPF_ODS.TB_TRANSACTIONS TRANS
+LEFT JOIN EMPF_ODS.TB_TRANSACTIONS_FUND TRANSFUND
+    ON TRANS.EMPLR_ACCT_CD = TRANSFUND.EMPLR_ACCT_CD
+    AND TRANS.MBR_ACCT_CD = TRANSFUND.MBR_ACCT_CD
+    AND TRANS.PAYROLL_GROUP_ID = TRANSFUND.PAYROLL_GROUP_ID
+    AND TRANS.REF_NO = TRANSFUND.REF_NO
+    AND TRANS.SEQ_NO = TRANSFUND.SEQ_NO
+    AND TRANS.SUB_ACTIVITY_CD = TRANSFUND.SUB_ACTIVITY_CD
+    AND TRANSFUND.DELETE_FLAG = 'N'
+LEFT JOIN EMPF_ODS.TB_FUND_INFORMATION FUNDINFO
+    ON TRANSFUND.FUND_CD = FUNDINFO.FUND_CD
+    AND FUNDINFO.DELETE_FLAG = 'N'
+LEFT JOIN EMPF_ODS.TB_FUND_PRICE FUNDPRICE
+    ON FUNDINFO.FUND_CD = FUNDPRICE.FUND_CD
+    AND TRANS.EFCTV_DATE = FUNDPRICE.EFCTV_DATE
+    AND FUNDPRICE.DELETE_FLAG = 'N'
+LEFT JOIN EMPF_ODS.TB_MEMBER_ACCOUNT MEM
+    ON TRANS.MBR_ACCT_CD = MEM.MBR_ACCT_CD
+    AND MEM.DELETE_FLAG = 'N'
+WHERE
+    TRANS.DELETE_FLAG = 'N'
+    AND TRANS.EFCTV_DATE BETWEEN :fromDate AND :toDate
+ORDER BY
+    TRANS.SCHEME_CD,
+    TRANS.MBR_ACCT_CD,
+    TRANS.EFCTV_DATE,
+    TRANSFUND.SUB_ACCT_TYPE,
+    TRANS.ACTIVITY_TYPE_CD,
+    TRANS.SUB_ACTIVITY_CD,
+    TRANSFUND.FUND_CD;
